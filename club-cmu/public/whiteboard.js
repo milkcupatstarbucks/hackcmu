@@ -91,8 +91,12 @@ var Whiteboard = (function () {
   }
 
   function open(id) {
+    // Keep the current drawing when reopening the same board. The socket stays
+    // connected while the panel is hidden and continues receiving updates.
+    if (boardId !== id) {
+      pixels = new Array(SIZE * SIZE).fill("#ffffff");
+    }
     boardId = id;
-    pixels = new Array(SIZE * SIZE).fill("#ffffff");
     draw();
     api.isOpen = true;
     panel.hidden = false;
@@ -138,10 +142,13 @@ var Whiteboard = (function () {
   }
 
   function connect() {
-    if (
-      socket &&
-      (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)
-    ) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      // Opening an existing connection must still request the board snapshot.
+      send({ type: "join", boardId: boardId, clientId: clientId });
+      return;
+    }
+
+    if (socket && socket.readyState === WebSocket.CONNECTING) {
       return;
     }
 
