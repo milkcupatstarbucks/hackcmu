@@ -28,6 +28,57 @@ This template has been updated for:
 | `npm run dev-nolog` | Launch a development web server without sending anonymous data (see "About log.js" below) |
 | `npm run build-nolog` | Create a production build in the `dist` folder without sending anonymous data (see "About log.js" below) |
 
+## Auth0 Login
+
+Players sign in with Google before the game starts. Config comes from environment
+variables so each developer keeps their own copy:
+
+```bash
+cp .env.example .env.local
+```
+
+Fill in `VITE_AUTH0_DOMAIN` and `VITE_AUTH0_CLIENT_ID` from your Auth0 **Single
+Page Application**. Until you do, the login screen shows setup instructions
+instead of a sign-in button. `.env.local` is gitignored; the domain and client ID
+are safe to share with the team and are compiled into the client bundle by
+design. A SPA has no client secret - never add one.
+
+### Auth0 dashboard setup
+
+1. Create a **Single Page Application** under Applications.
+2. In its Settings, set **Allowed Callback URLs**, **Allowed Logout URLs** and
+   **Allowed Web Origins** to your dev server origin. This must match exactly,
+   port included - see the note on ports below.
+3. Enable the **Google** social connection; leave the others off.
+4. Replace Auth0's Google *development keys* with your own Google Cloud OAuth
+   client. The dev keys are shared across all Auth0 tenants and rate limited, so
+   they are a poor thing to depend on during a demo.
+
+`VITE_AUTH0_AUDIENCE` is optional today and needed once a game server verifies
+players: register an API in Auth0 and use its Identifier. Without an audience
+Auth0 issues an *opaque* access token a server cannot validate; with one you get
+a signed JWT. `getAccessToken()` in `src/auth/auth0.ts` returns that token.
+
+### A note on ports
+
+Auth0 only redirects back to an origin you registered, so the dev server port is
+part of the auth config, not a detail. `vite/config.dev.mjs` pins **5173** with
+`strictPort: true`: if something already holds 5173 the server fails loudly
+instead of quietly moving to 5174 and breaking login with a confusing
+"Callback URL mismatch".
+
+Both `http://localhost:5173` and `http://localhost:8080` are registered in Auth0.
+If you need a different port, register it in the Auth0 application settings
+first - all three URL fields - then change it here.
+
+### How it works
+
+`src/main.ts` resolves the Auth0 session *before* Phaser boots, because Universal
+Login is a full-page redirect that reloads the app with `?code=&state=` in the
+URL. Resolving first means `Preloader` can route to a known state: straight to
+`MainMenu` for a signed-in player, or to the `Login` scene otherwise. Doing it
+the other way round flashes the login screen on every return trip.
+
 ## Writing Code
 
 After cloning the repo, run `npm install` from your project directory. Then, you can start the local development server by running `npm run dev`.
