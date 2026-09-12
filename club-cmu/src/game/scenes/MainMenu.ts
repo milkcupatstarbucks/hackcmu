@@ -1,12 +1,9 @@
-import { Scene, GameObjects } from 'phaser';
+import { Scene } from 'phaser';
 import { getUser, logout } from '../../auth/auth0';
+import { addFenceLogo, addMenuButton, addTitleBackdrop } from '../ui/title';
 
 export class MainMenu extends Scene
 {
-    background: GameObjects.Image;
-    logo: GameObjects.Image;
-    title: GameObjects.Text;
-
     constructor ()
     {
         super('MainMenu');
@@ -14,48 +11,38 @@ export class MainMenu extends Scene
 
     create ()
     {
-        this.background = this.add.image(512, 384, 'background');
+        addTitleBackdrop(this);
+        addFenceLogo(this, 512, 250);
 
-        this.logo = this.add.image(512, 300, 'logo');
+        const user = getUser();
+        const name = user?.given_name ?? user?.name ?? user?.email;
 
-        this.title = this.add.text(512, 460, 'Main Menu', {
-            fontFamily: 'Arial Black', fontSize: 38, color: '#ffffff',
-            stroke: '#000000', strokeThickness: 8,
+        this.add.text(512, 450, name ? `Welcome back, ${name}!` : 'Welcome to campus!', {
+            fontFamily: 'Arial Black', fontSize: 30, color: '#ffffff',
+            stroke: '#1a0409', strokeThickness: 6,
             align: 'center'
         }).setOrigin(0.5);
 
-        const user = getUser();
+        addMenuButton(this, 512, 540, 'Play', () => this.scene.start('Game'));
 
         if (user !== null)
         {
-            this.add.text(512, 516, `Signed in as ${user.name ?? user.email ?? 'player'}`, {
-                fontFamily: 'Arial', fontSize: 18, color: '#ffffff',
-                stroke: '#000000', strokeThickness: 4,
-                align: 'center'
-            }).setOrigin(0.5);
-        }
-
-        //  An explicit Play button rather than the template's scene-wide
-        //  pointerdown listener: that fired on *any* click, so clicking 'Log out'
-        //  would have started the game at the same time.
-        this.createTextButton(512, 580, 'Play', () => this.scene.start('Game'));
-
-        if (user !== null)
-        {
-            this.createTextButton(512, 644, 'Log out', () => logout());
+            this.createLogoutLink(512, 630);
         }
     }
 
-    private createTextButton (x: number, y: number, text: string, onClick: () => void)
+    //  A quiet text link, so it can't be mistaken for the main action. It is
+    //  its own interactive object rather than a scene-wide pointerdown
+    //  listener, which would also have fired when clicking Play.
+    private createLogoutLink (x: number, y: number)
     {
-        const button = this.add.text(x, y, text, {
-            fontFamily: 'Arial Black', fontSize: 28, color: '#ffffff',
-            stroke: '#000000', strokeThickness: 6,
-            align: 'center'
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        const link = this.add.text(x, y, 'Log out', {
+            fontFamily: 'Arial', fontSize: 20, color: '#ffffff',
+            stroke: '#1a0409', strokeThickness: 4
+        }).setOrigin(0.5).setAlpha(0.85).setInteractive({ useHandCursor: true });
 
-        button.on('pointerover', () => button.setColor('#ffdd57'));
-        button.on('pointerout', () => button.setColor('#ffffff'));
-        button.once('pointerdown', onClick);
+        link.on('pointerover', () => link.setAlpha(1).setColor('#ffd6dc'));
+        link.on('pointerout', () => link.setAlpha(0.85).setColor('#ffffff'));
+        link.once('pointerdown', () => logout());
     }
 }

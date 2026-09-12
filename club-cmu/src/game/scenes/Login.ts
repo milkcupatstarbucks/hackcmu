@@ -1,5 +1,6 @@
 import { Geom, Scene } from 'phaser';
 import { getAuthError, isAuthConfigured, login } from '../../auth/auth0';
+import { addFenceLogo, addTitleBackdrop } from '../ui/title';
 
 export class Login extends Scene
 {
@@ -10,29 +11,31 @@ export class Login extends Scene
 
     create ()
     {
-        this.add.image(512, 384, 'background');
-        this.add.image(512, 240, 'logo');
-
-        this.add.text(512, 400, 'Club CMU', {
-            fontFamily: 'Arial Black', fontSize: 44, color: '#ffffff',
-            stroke: '#000000', strokeThickness: 8,
-            align: 'center'
-        }).setOrigin(0.5);
+        addTitleBackdrop(this);
+        addFenceLogo(this, 512, 270);
 
         if (isAuthConfigured())
         {
-            this.createGoogleButton(512, 500);
+            this.add.text(512, 480, 'Sign in to join your classmates on campus', {
+                fontFamily: 'Arial', fontSize: 20, color: '#ffffff',
+                stroke: '#1a0409', strokeThickness: 4,
+                align: 'center'
+            }).setOrigin(0.5);
+
+            this.createGoogleButton(512, 550);
         }
         else
         {
-            this.showSetupNotice(512, 510);
+            this.showSetupNotice(512, 560);
         }
+
+        this.addFooter();
 
         const error = getAuthError();
 
         if (error !== null)
         {
-            this.add.text(512, 620, `Sign-in failed: ${error}`, {
+            this.add.text(512, 650, `Sign-in failed: ${error}`, {
                 fontFamily: 'Arial', fontSize: 16, color: '#ff8a80',
                 stroke: '#000000', strokeThickness: 3,
                 align: 'center', wordWrap: { width: 720 }
@@ -108,6 +111,13 @@ export class Login extends Scene
             login();
 
         });
+    }
+
+    private addFooter ()
+    {
+        this.add.text(512, 740, 'Made for Carnegie Mellon students at HackCMU', {
+            fontFamily: 'Arial', fontSize: 14, color: '#ffffff'
+        }).setOrigin(0.5).setAlpha(0.7);
     }
 
     private showSetupNotice (x: number, y: number)
