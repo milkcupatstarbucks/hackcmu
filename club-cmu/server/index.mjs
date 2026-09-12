@@ -3,7 +3,9 @@ import { MongoClient } from 'mongodb';
 import { fileURLToPath } from 'node:url';
 import { createApplication } from './application.mjs';
 import { makeAuthenticator } from './auth.mjs';
-dotenv.config({ path: '.env' });
+// .env.local is shared with Vite and .env.agent holds the IFM key; .env also
+// works. When a variable appears in several files, the first file listed wins.
+dotenv.config({ path: ['.env.local', '.env.agent', '.env'] });
 // Load the model module after dotenv has populated the environment.
 const { organize } = await import('./organize.mjs');
 if (!process.env.MONGODB_URI) throw Error('MONGODB_URI is required.');
