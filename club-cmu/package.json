@@ -17,13 +17,18 @@
     "dev": "node log.js dev & vite --config vite/config.dev.mjs",
     "build": "node log.js build & vite build --config vite/config.prod.mjs",
     "dev-nolog": "vite --config vite/config.dev.mjs",
-    "build-nolog": "vite build --config vite/config.prod.mjs"
+    "build-nolog": "vite build --config vite/config.prod.mjs",
+    "api": "node server/index.mjs",
+    "dev-full": "node scripts/dev.mjs",
+    "start": "node server/index.mjs",
+    "migrate:json-to-mongo": "node scripts/migrate-json-to-mongodb.mjs"
   },
   "devDependencies": {
     "typescript": "~5.7.2",
     "vite": "^6.3.1"
   },
   "dependencies": {
+    "mongodb": "^7.6.0",
     "phaser": "4.0.0",
     "terser": "^5.39.0"
   }

@@ -8,11 +8,20 @@ RUN npm ci
 COPY . .
 RUN npm run build-nolog
 
-FROM nginx:alpine
+FROM node:20-alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=3001
 
-EXPOSE 80
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/server ./server
 
-CMD ["nginx", "-g", "daemon off;"]
+RUN chown -R node:node /app
+USER node
+
+EXPOSE 3001
+
+CMD ["node", "server/index.mjs"]

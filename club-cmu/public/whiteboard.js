@@ -25,14 +25,69 @@ var Whiteboard = (function () {
     applyPixel: applyPixel,
     loadBoard: loadBoard,
 
-    // Replace this function when connecting multiplayer.
+    // The API writes each placement to the shared board on the server.
+    // A future WebSocket connection could replace this with live updates.
     onPlacePixel: function (placement) {
       applyPixel(placement);
+
+      fetch("/api/boards/" + encodeURIComponent(placement.boardId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          x: placement.x,
+          y: placement.y,
+          color: placement.color,
+          clientId: getClientId()
+        })
+      })
+        .then(function (response) {
+          if (!response.ok) throw new Error("Could not save pixel.");
+          return response.json();
+        })
+        .then(function (board) {
+          // The server is authoritative. Reloading its response also keeps
+          // this client correct if someone else changed the board first.
+          if (api.isOpen && board.boardId === boardId) {
+            loadBoard(board.pixels);
+          }
+        })
+        .catch(function () {
+          // applyPixel already saved a local fallback. The next server-backed
+          // placement or refresh will retry with the server's current state.
+        });
     }
   };
 
   function storageKey() {
     return "cmu-whiteboard:" + boardId;
+  }
+
+  function getClientId() {
+    var key = "cmu-whiteboard:client-id";
+
+    try {
+      var existing = localStorage.getItem(key);
+      if (existing && /^[a-zA-Z0-9_-]{8,128}$/.test(existing)) return existing;
+
+      var generated = window.crypto && window.crypto.randomUUID
+        ? window.crypto.randomUUID()
+        : "client-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+      localStorage.setItem(key, generated);
+      return generated;
+    } catch (error) {
+      // Private browsing or blocked storage still gets an anonymous session id.
+      return "client-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    }
+  }
+
+  function registerClient(clientId, currentBoardId) {
+    fetch("/api/clients/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: clientId, boardId: currentBoardId })
+    }).catch(function () {
+      // The board can still use the local fallback when the server is offline.
+    });
   }
 
   function validColor(color) {
@@ -80,18 +135,33 @@ var Whiteboard = (function () {
   function open(id) {
     boardId = id;
     pixels = new Array(SIZE * SIZE).fill("#ffffff");
-
-    try {
-      var saved = JSON.parse(localStorage.getItem(storageKey()));
-      loadBoard(saved);
-    } catch (error) {
-      // Missing or invalid local data starts with a blank board.
-    }
-
     draw();
     api.isOpen = true;
     panel.hidden = false;
-    updateStatus();
+    status.textContent = "Loading board...";
+    registerClient(getClientId(), boardId);
+
+    fetch("/api/boards/" + encodeURIComponent(boardId))
+      .then(function (response) {
+        if (!response.ok) throw new Error("Could not load board.");
+        return response.json();
+      })
+      .then(function (board) {
+        if (api.isOpen && board.boardId === boardId) {
+          loadBoard(board.pixels);
+          updateStatus();
+        }
+      })
+      .catch(function () {
+        // Keep the previous localStorage behavior as an offline fallback.
+        try {
+          var saved = JSON.parse(localStorage.getItem(storageKey()));
+          loadBoard(saved);
+        } catch (error) {
+          // Missing or invalid local data starts with a blank board.
+        }
+        updateStatus();
+      });
   }
 
   function close() {
