@@ -1,14 +1,74 @@
 var Whiteboard = (function () {
   "use strict";
 
-  var WIDTH = 1024;
-  var HEIGHT = 768;
+  // Must match BOARD_WIDTH / BOARD_HEIGHT in server/application.mjs.
+  var WIDTH = 1600;
+  var HEIGHT = 600;
   var MAX_POINTS = 12000;
 
   var panel = document.getElementById("whiteboard-panel");
   var canvas = document.getElementById("whiteboard-canvas");
   var ctx = canvas.getContext("2d");
   var status = document.getElementById("whiteboard-status");
+
+  // organizer.js reads the canvas size when it loads, so set it first.
+  canvas.width = WIDTH;
+  canvas.height = HEIGHT;
+
+  // The Fence on the Cut: four thick posts and two heavy rails, with every
+  // edge rounded by decades of paint. Only these parts can be painted; the
+  // gaps between and below the rails show campus behind the fence.
+  var GROUND_Y = 572;
+  var FENCE_LEFT = 38;
+  var POST_WIDTH = 96;
+  var BAY_WIDTH = 380;
+  var FENCE_RIGHT = FENCE_LEFT + POST_WIDTH * 4 + BAY_WIDTH * 3;
+
+  var POSTS = [0, 1, 2, 3].map(function (i) {
+    return {
+      x: FENCE_LEFT + i * (POST_WIDTH + BAY_WIDTH),
+      y: 10,
+      width: POST_WIDTH,
+      height: 580,
+      radius: 30
+    };
+  });
+
+  var RAILS = [100, 330].map(function (y) {
+    return {
+      x: FENCE_LEFT,
+      y: y,
+      width: FENCE_RIGHT - FENCE_LEFT,
+      height: 150,
+      radius: 22
+    };
+  });
+
+  var FENCE_PARTS = POSTS.concat(RAILS);
+  var fencePath = new Path2D();
+
+  FENCE_PARTS.forEach(function (part) {
+    addRoundedRect(fencePath, part);
+  });
+
+  // Every part is traced in the same direction, so with the nonzero rule the
+  // overlapping posts and rails fill and clip as one silhouette.
+  function addRoundedRect(path, part) {
+    var right = part.x + part.width;
+    var bottom = part.y + part.height;
+    var r = part.radius;
+
+    path.moveTo(part.x + r, part.y);
+    path.arcTo(right, part.y, right, bottom, r);
+    path.arcTo(right, bottom, part.x, bottom, r);
+    path.arcTo(part.x, bottom, part.x, part.y, r);
+    path.arcTo(part.x, part.y, right, part.y, r);
+    path.closePath();
+  }
+
+  function isOnFence(point) {
+    return ctx.isPointInPath(fencePath, point[0], point[1]);
+  }
 
   // Persistent drawing data.
   var elements = [];
@@ -139,14 +199,11 @@ var Whiteboard = (function () {
   function save() { /* Persistence belongs to the server. */ }
 
   function loadBoard(data) {
-    if (
-      !Array.isArray(data) ||
-      !data.every(validElement)
-    ) {
-      return false;
-    }
+    if (!Array.isArray(data)) return false;
 
-    elements = JSON.parse(JSON.stringify(data));
+    // Skip, rather than reject the whole board for, elements that don't fit
+    // the current board, such as drawings saved before it became the Fence.
+    elements = JSON.parse(JSON.stringify(data.filter(validElement)));
     render();
     return true;
   }
@@ -246,12 +303,47 @@ var Whiteboard = (function () {
     ctx.fillText(name, x + 6, y + 4);
   }
 
-  function render() {
-    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+  function drawCampus() {
+    ctx.fillStyle = "#cfe3f1";
+    ctx.fillRect(0, 0, WIDTH, GROUND_Y);
+    ctx.fillStyle = "#7faa5b";
+    ctx.fillRect(0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y);
+  }
+
+  function drawFence() {
+    // Stroke first, then fill over it, so only the outer silhouette keeps an
+    // outline and the seams where posts overlap rails disappear.
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "#4a3b2e";
+    ctx.stroke(fencePath);
+    ctx.fillStyle = "#efe8da";
+    ctx.fill(fencePath);
+
+    ctx.save();
+    ctx.clip(fencePath);
 
     elements.forEach(drawElement);
 
     if (draft) drawElement(draft);
+
+    // Faint post edges on top of the paint keep the fence readable once it
+    // has been painted over.
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(40, 30, 20, 0.18)";
+    POSTS.forEach(function (post) {
+      var path = new Path2D();
+      addRoundedRect(path, post);
+      ctx.stroke(path);
+    });
+
+    ctx.restore();
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+    drawCampus();
+    drawFence();
 
     peers.forEach(function (cursor) {
       drawCursor(cursor, false);
@@ -452,6 +544,11 @@ var Whiteboard = (function () {
     setLocalCursor(point);
 
     if (tool === "text") {
+      if (!isOnFence(point)) {
+        status.textContent = "Click a post or rail to place a note.";
+        return;
+      }
+
       // Simple MVP editor. Replace with an inline text box later.
       leaveCursor();
       var text = window.prompt("Add a short note:");
@@ -495,6 +592,7 @@ var Whiteboard = (function () {
 
     var point = pointFromEvent(event);
     setLocalCursor(point);
+    canvas.style.cursor = draft || isOnFence(point) ? "crosshair" : "default";
 
     if (
       draft &&
@@ -521,7 +619,12 @@ var Whiteboard = (function () {
     var completed = draft;
     cancelDraft();
 
-    if (completed) api.onElementCreate(completed);
+    // A stroke entirely in the gaps would be saved but never visible.
+    if (completed && completed.points.some(isOnFence)) {
+      api.onElementCreate(completed);
+    } else if (completed) {
+      status.textContent = "Paint on the posts and rails. The gaps can't hold paint.";
+    }
 
     leaveCursor();
   });

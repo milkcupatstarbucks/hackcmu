@@ -3,6 +3,10 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 
+// The Fence board's coordinate space; public/whiteboard.js uses the same size.
+const BOARD_WIDTH = 1600;
+const BOARD_HEIGHT = 600;
+
 export function createApplication({ store, authenticate, organize, distDirectory, localDemo = false }) {
   const app = express();
   const server = http.createServer(app);
@@ -24,7 +28,7 @@ export function createApplication({ store, authenticate, organize, distDirectory
   }
   function elementFrom(input, user, boardId) {
     if (!input || typeof input.id !== 'string' || !/^[a-z0-9_-]{8,128}$/i.test(input.id) || !/^#[0-9a-f]{6}$/i.test(input.color)) throw Error('Invalid element.');
-    const point = p => Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && p[0] >= 0 && p[0] <= 1024 && p[1] >= 0 && p[1] <= 768;
+    const point = p => Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && p[0] >= 0 && p[0] <= BOARD_WIDTH && p[1] >= 0 && p[1] <= BOARD_HEIGHT;
     const now = new Date().toISOString();
     const element = { id: input.id, boardId, authorId: user.id, color: input.color, type: input.type, createdAt: now, updatedAt: now, deletedAt: null };
     if (input.type === 'stroke' && Array.isArray(input.points) && input.points.length >= 1 && input.points.length <= 12000 && input.points.every(point) && Number.isFinite(input.width) && input.width >= 1 && input.width <= 16) return { ...element, points: input.points, width: input.width };
@@ -57,7 +61,7 @@ export function createApplication({ store, authenticate, organize, distDirectory
         if (!room || !socket.user || m.boardId !== room.id) throw Error('Join this board first.');
         if (m.type === 'cursor-move') {
           if (Date.now() - (socket.lastCursor || 0) < 50) return;
-          if (![m.x, m.y].every(Number.isFinite) || m.x < 0 || m.x > 1024 || m.y < 0 || m.y > 768) return;
+          if (![m.x, m.y].every(Number.isFinite) || m.x < 0 || m.x > BOARD_WIDTH || m.y < 0 || m.y > BOARD_HEIGHT) return;
           socket.lastCursor = Date.now();
           for (const other of room.sockets) if (other !== socket) send(other, { type: 'cursor-move', boardId: room.id, playerId: socket.peerId, name: socket.user.name, color: '#3388ff', x: m.x, y: m.y });
           return;
