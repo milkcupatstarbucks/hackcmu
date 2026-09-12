@@ -3,8 +3,7 @@ import { MongoClient } from 'mongodb';
 import { fileURLToPath } from 'node:url';
 import { createApplication } from './application.mjs';
 import { makeAuthenticator } from './auth.mjs';
-dotenv.config({ path: '.env.local' });
-dotenv.config({ path: '.env.agent' });
+dotenv.config({ path: '.env' });
 // Load the model module after dotenv has populated the environment.
 const { organize } = await import('./organize.mjs');
 if (!process.env.MONGODB_URI) throw Error('MONGODB_URI is required.');
