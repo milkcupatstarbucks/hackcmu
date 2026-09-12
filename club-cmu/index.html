@@ -5,6 +5,7 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/whiteboard.css">
     <title>Phaser - Template</title>
 </head>
 
@@ -12,6 +13,21 @@
     <div id="app">
         <div id="game-container"></div>
     </div>
+    <div id="whiteboard-panel" hidden>
+    <div class="whiteboard-card">
+        <button id="whiteboard-close">Back to campus</button>
+        <h2>The Fence</h2>
+        <div id="whiteboard-palette"></div>
+        <canvas
+            id="whiteboard-canvas"
+            width="512"
+            height="512"
+        ></canvas>
+        <p id="whiteboard-status"></p>
+    </div>
+</div>
+<script src="/whiteboard.js"></script>
+<script type="module" src="/src/main.ts"></script>
     <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

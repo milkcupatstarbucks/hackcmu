@@ -1,0 +1,47 @@
+#whiteboard-panel[hidden] {
+    display: none;
+}
+
+#whiteboard-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: grid;
+    place-items: center;
+    background: #000a;
+}
+
+.whiteboard-card {
+    padding: 20px;
+    background: white;
+    color: #222;
+    border-radius: 12px;
+    max-height: 95vh;
+    overflow: auto;
+}
+
+#whiteboard-canvas {
+    display: block;
+    width: min(512px, 85vw);
+    height: auto;
+    image-rendering: pixelated;
+    cursor: crosshair;
+}
+
+#whiteboard-palette {
+    display: flex;
+    gap: 8px;
+    margin: 15px 0;
+}
+
+#whiteboard-palette button {
+    width: 28px;
+    height: 28px;
+    border: 1px solid #777;
+    cursor: pointer;
+}
+
+#whiteboard-palette button[aria-pressed="true"] {
+    outline: 3px solid #222;
+    outline-offset: 2px;
+}

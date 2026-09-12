@@ -1,4 +1,13 @@
 import { Scene } from 'phaser';
+declare global {
+    interface Window {
+        Whiteboard: {
+            isOpen: boolean;
+            open(boardId: string): void;
+            close(): void;
+        };
+    }
+}
 
 export class Game extends Scene
 {
@@ -26,10 +35,21 @@ export class Game extends Scene
         });
         this.msg_text.setOrigin(0.5);
 
-        this.input.once('pointerdown', () => {
+        // this.input.once('pointerdown', () => {
 
-            this.scene.start('GameOver');
+        //     this.scene.start('GameOver');
 
+        // });
+        this.add.text(40, 40, 'Open The Fence', {
+            fontFamily: 'Arial',
+            fontSize: 24,
+            color: '#ffffff',
+            backgroundColor: '#c41230',
+            padding: { x: 16, y: 12 }
+        })
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => {
+            window.Whiteboard.open('the-fence');
         });
     }
 }
