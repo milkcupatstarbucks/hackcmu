@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
+import { createCampus } from './campus.mjs';
 
 // The Fence board's coordinate space; public/whiteboard.js uses the same size.
 const BOARD_WIDTH = 1600;
@@ -12,6 +13,7 @@ export function createApplication({ store, authenticate, organize, distDirectory
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 512 * 1024 });
   const rooms = new Map();
+  const campus = createCampus();
   const validBoard = id => typeof id === 'string' && /^[a-z0-9-]{1,64}$/i.test(id);
   const send = (socket, data) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(data)); };
   const broadcast = (room, data) => room.sockets.forEach(s => send(s, data));
@@ -56,6 +58,14 @@ export function createApplication({ store, authenticate, organize, distDirectory
           });
           return;
         }
+        if (m.type === 'campus-join') {
+          if (!socket.user) socket.user = await authenticate(m.token, m.clientId, m.name);
+          clearTimeout(authTimer);
+          if (socket.readyState === WebSocket.OPEN) campus.join(socket, socket.user, m);
+          return;
+        }
+        if (m.type === 'campus-move') { campus.move(socket, m); return; }
+        if (m.type === 'campus-leave') { campus.leave(socket); return; }
         if (m.type === 'leave') { leave(socket); return; }
         const room = socket.room;
         if (!room || !socket.user || m.boardId !== room.id) throw Error('Join this board first.');
@@ -92,7 +102,7 @@ export function createApplication({ store, authenticate, organize, distDirectory
         });
       }).catch(error => { send(socket, { type: 'error', message: error.message || 'Request failed.' }); });
     });
-    socket.on('close', () => { clearTimeout(authTimer); leave(socket); });
+    socket.on('close', () => { clearTimeout(authTimer); leave(socket); campus.leave(socket); });
   });
   const heartbeat = setInterval(() => { for (const s of wss.clients) { if (!s.alive) s.terminate(); else { s.alive = false; s.ping(); } } }, 30000);
   heartbeat.unref();

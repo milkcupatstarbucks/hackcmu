@@ -23,7 +23,7 @@ export class MainMenu extends Scene
             align: 'center'
         }).setOrigin(0.5);
 
-        addMenuButton(this, 512, 540, 'Play', () => this.scene.start('Game'));
+        addMenuButton(this, 512, 540, 'Play', () => this.scene.start('Campus'));
 
         if (user !== null)
         {

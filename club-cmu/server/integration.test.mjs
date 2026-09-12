@@ -40,3 +40,45 @@ test('shared drawings, validation, ownership, organization, and reload', async (
 test('production never permits local anonymous mode', async () => {
   await assert.rejects(makeAuthenticator({ LOCAL_DEMO: 'true', NODE_ENV: 'production' })(null, 'student-a', 'A'), /Authentication/);
 });
+
+test('campus log on, movement, one avatar per account, and log off', async () => {
+  const store = { load: async () => null, save: async () => {}, ping: async () => {} };
+  const app = createApplication({ store, authenticate: makeAuthenticator({ LOCAL_DEMO: 'true' }), organize: async () => ({ groups: [] }), distDirectory: fileURLToPath(new URL('../public/', import.meta.url)), localDemo: true });
+  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  const url = `ws://127.0.0.1:${app.server.address().port}/ws`;
+  function client(clientId, join = {}) {
+    const ws = new WebSocket(url);
+    const messages = [];
+    ws.on('message', raw => messages.push(JSON.parse(raw)));
+    const next = async type => { const end = Date.now() + 4000; while (Date.now() < end) { const i = messages.findIndex(m => m.type === type); if (i >= 0) return messages.splice(i, 1)[0]; await new Promise(r => setTimeout(r, 10)); } throw Error('Timed out: ' + type); };
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'campus-join', clientId, name: clientId, ...join })));
+    return { ws, next, send: m => ws.send(JSON.stringify(m)) };
+  }
+  try {
+    const a = client('student-a');
+    const welcomeA = await a.next('campus-welcome');
+    assert.deepEqual(welcomeA.players, []);
+    assert.ok(Number.isInteger(welcomeA.you.look));
+
+    const b = client('student-b', { x: 500, y: 600 });
+    const welcomeB = await b.next('campus-welcome');
+    assert.deepEqual([welcomeB.you.x, welcomeB.you.y], [500, 600]);
+    assert.equal(welcomeB.players[0].id, welcomeA.you.id);
+    assert.notEqual(welcomeB.you.look, welcomeA.you.look);
+    assert.equal((await a.next('player-joined')).player.name, 'student-b');
+    assert.equal(JSON.stringify(welcomeB).includes('demo-'), false);
+
+    b.send({ type: 'campus-move', x: 520, y: 610, facing: 'left', moving: true });
+    assert.deepEqual(await a.next('player-moved'), { type: 'player-moved', id: welcomeB.you.id, x: 520, y: 610, facing: 'left', moving: true });
+
+    // Same account in another tab replaces the first avatar.
+    const b2 = client('student-b');
+    await b.next('campus-replaced');
+    assert.equal((await a.next('player-left')).id, welcomeB.you.id);
+    const rejoined = (await a.next('player-joined')).player;
+
+    b2.send({ type: 'campus-leave' });
+    assert.equal((await a.next('player-left')).id, rejoined.id);
+    a.ws.close(); b.ws.close(); b2.ws.close();
+  } finally { await app.close(); }
+});

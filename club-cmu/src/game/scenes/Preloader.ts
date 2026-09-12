@@ -1,5 +1,6 @@
 import { Scene } from 'phaser';
 import { isLoggedIn } from '../../auth/auth0';
+import { createScottyAnimations, loadScottySheet } from '../campus/scotty';
 import { addTitleBackdrop } from '../ui/title';
 
 export class Preloader extends Scene
@@ -34,12 +35,13 @@ export class Preloader extends Scene
         this.load.setPath('assets');
 
         this.load.svg('google-mark', 'google-mark.svg', { width: 36, height: 36 });
+        loadScottySheet(this);
     }
 
     create ()
     {
-        //  When all the assets have loaded, it's often worth creating global objects here that the rest of the game can use.
-        //  For example, you can define global animations here, so we can use them in other scenes.
+        //  Animations are global, so every scene can use the Scotty walk cycles.
+        createScottyAnimations(this);
 
         //  Auth0 has already been resolved by this point (see src/main.ts), so we
         //  can skip the Login scene outright when this browser has a live session.
