@@ -67,9 +67,41 @@ part of the auth config, not a detail. `vite/config.dev.mjs` pins **5173** with
 instead of quietly moving to 5174 and breaking login with a confusing
 "Callback URL mismatch".
 
-Both `http://localhost:5173` and `http://localhost:8080` are registered in Auth0.
-If you need a different port, register it in the Auth0 application settings
-first - all three URL fields - then change it here.
+Registered in Auth0 today: `http://localhost:5173` (npm dev server),
+`http://localhost:8080` and `http://localhost:8081` (Docker). If you serve the
+app on any other port or host, register that origin in the Auth0 application
+settings first - all three URL fields - or sign-in fails with
+"Callback URL mismatch".
+
+### Running under Docker
+
+```bash
+docker build -t club-cmu .
+docker run --rm -p 8081:80 club-cmu
+```
+
+The catch: **Auth0 config is compiled into the JS bundle at build time**, not
+read at `docker run`. Vite only picks up `VITE_*` from `.env` files, not from
+the process environment, so `-e VITE_AUTH0_DOMAIN=...` on `docker run` does
+nothing. Supply the values at build time instead, either way:
+
+```bash
+# 1. build args (works on a fresh clone with no .env.local)
+docker build \
+  --build-arg VITE_AUTH0_DOMAIN=your-tenant.us.auth0.com \
+  --build-arg VITE_AUTH0_CLIENT_ID=your-client-id \
+  -t club-cmu .
+
+# 2. or just have a .env.local present - it is in the build context
+docker build -t club-cmu .
+```
+
+Build args win when both are present. With neither, the build still succeeds and
+the app shows its setup screen rather than failing at sign-in. Rebuild the image
+after changing any Auth0 value - restarting the container is not enough.
+
+Note that the port you publish (`-p 8081:80`) is the origin Auth0 sees, not the
+container's port 80.
 
 ### How it works
 
