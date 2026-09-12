@@ -17,23 +17,17 @@ var Whiteboard = (function () {
   var selectedColor = COLORS[2];
   var boardId = null;
   var nextPlacementAt = 0;
+  var socket = null;
+  var reconnectTimer = null;
+  var connectionState = "disconnected";
 
   var api = {
     isOpen: false,
     open: open,
     close: close,
     applyPixel: applyPixel,
-    loadBoard: loadBoard,
-
-    // Replace this function when connecting multiplayer.
-    onPlacePixel: function (placement) {
-      applyPixel(placement);
-    }
+    loadBoard: loadBoard
   };
-
-  function storageKey() {
-    return "cmu-whiteboard:" + boardId;
-  }
 
   function validColor(color) {
     return COLORS.indexOf(color) !== -1;
@@ -80,17 +74,10 @@ var Whiteboard = (function () {
   function open(id) {
     boardId = id;
     pixels = new Array(SIZE * SIZE).fill("#ffffff");
-
-    try {
-      var saved = JSON.parse(localStorage.getItem(storageKey()));
-      loadBoard(saved);
-    } catch (error) {
-      // Missing or invalid local data starts with a blank board.
-    }
-
     draw();
     api.isOpen = true;
     panel.hidden = false;
+    connect();
     updateStatus();
   }
 
@@ -115,16 +102,90 @@ var Whiteboard = (function () {
 
     pixels[data.y * SIZE + data.x] = data.color;
     draw();
+  }
 
-    try {
-      localStorage.setItem(storageKey(), JSON.stringify(pixels));
-    } catch (error) {
-      // Drawing still works when browser storage is unavailable.
+  function socketUrl() {
+    var protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return protocol + "//" + window.location.host + "/ws";
+  }
+
+  function send(message) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(message));
+      return true;
     }
+
+    return false;
+  }
+
+  function connect() {
+    if (
+      socket &&
+      (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
+
+    connectionState = "connecting";
+    updateStatus();
+    socket = new WebSocket(socketUrl());
+
+    socket.addEventListener("open", function () {
+      connectionState = "connected";
+      send({ type: "join", boardId: boardId });
+      updateStatus();
+    });
+
+    socket.addEventListener("message", function (event) {
+      var message;
+
+      try {
+        message = JSON.parse(event.data);
+      } catch (error) {
+        return;
+      }
+
+      if (message.type === "snapshot" && message.boardId === boardId) {
+        loadBoard(message.pixels);
+      } else if (message.type === "pixel") {
+        applyPixel(message);
+      } else if (message.type === "error") {
+        connectionState = "error";
+        status.textContent = "Whiteboard error: " + message.message;
+      }
+    });
+
+    socket.addEventListener("close", function () {
+      socket = null;
+
+      if (!api.isOpen) {
+        return;
+      }
+
+      connectionState = "disconnected";
+      updateStatus();
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connect, 1500);
+    });
+
+    socket.addEventListener("error", function () {
+      connectionState = "error";
+      updateStatus();
+    });
   }
 
   function updateStatus() {
     var remaining = Math.max(0, nextPlacementAt - Date.now());
+
+    if (connectionState === "connecting") {
+      status.textContent = "Connecting to the shared whiteboard...";
+      return;
+    }
+
+    if (connectionState === "disconnected" || connectionState === "error") {
+      status.textContent = "Reconnecting to the shared whiteboard...";
+      return;
+    }
 
     status.textContent = remaining > 0
       ? "Next pixel in " + (remaining / 1000).toFixed(1) + "s"
@@ -159,14 +220,19 @@ var Whiteboard = (function () {
 
     if (x < 0 || x >= SIZE || y < 0 || y >= SIZE) return;
 
-    nextPlacementAt = Date.now() + COOLDOWN;
-
-    api.onPlacePixel({
+    if (!send({
+      type: "place",
       boardId: boardId,
       x: x,
       y: y,
       color: selectedColor
-    });
+    })) {
+      status.textContent = "Not connected yet. Your pixel was not sent.";
+      connect();
+      return;
+    }
+
+    nextPlacementAt = Date.now() + COOLDOWN;
 
     updateStatus();
   });

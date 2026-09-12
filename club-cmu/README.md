@@ -77,8 +77,11 @@ settings first - all three URL fields - or sign-in fails with
 
 ```bash
 docker build -t club-cmu .
-docker run --rm -p 8081:80 club-cmu
+docker run --rm --env-file .env.local -p 8081:3000 club-cmu
 ```
+
+The runtime needs `MONGODB_URI` (and optionally `MONGODB_DB_NAME`) in
+`.env.local` so the shared whiteboard can load and save its data.
 
 The catch: **Auth0 config is compiled into the JS bundle at build time**, not
 read at `docker run`. Vite only picks up `VITE_*` from `.env` files, not from
@@ -86,22 +89,20 @@ the process environment, so `-e VITE_AUTH0_DOMAIN=...` on `docker run` does
 nothing. Supply the values at build time instead, either way:
 
 ```bash
-# 1. build args (works on a fresh clone with no .env.local)
+# Auth0's domain and client ID are public SPA settings, so build args are safe.
 docker build \
   --build-arg VITE_AUTH0_DOMAIN=your-tenant.us.auth0.com \
   --build-arg VITE_AUTH0_CLIENT_ID=your-client-id \
   -t club-cmu .
-
-# 2. or just have a .env.local present - it is in the build context
-docker build -t club-cmu .
 ```
 
-Build args win when both are present. With neither, the build still succeeds and
-the app shows its setup screen rather than failing at sign-in. Rebuild the image
-after changing any Auth0 value - restarting the container is not enough.
+With neither, the build still succeeds and the app shows its setup screen rather
+than failing at sign-in. Rebuild the image after changing any Auth0 value -
+restarting the container is not enough. `.env.local` is excluded from the Docker
+build context, so your MongoDB password is never copied into an image layer.
 
-Note that the port you publish (`-p 8081:80`) is the origin Auth0 sees, not the
-container's port 80.
+Note that the port you publish (`-p 8081:3000`) is the origin Auth0 sees, not
+the container's internal port 3000.
 
 ### How it works
 
@@ -110,6 +111,53 @@ Login is a full-page redirect that reloads the app with `?code=&state=` in the
 URL. Resolving first means `Preloader` can route to a known state: straight to
 `MainMenu` for a signed-in player, or to the `Login` scene otherwise. Doing it
 the other way round flashes the login screen on every return trip.
+
+## Shared Whiteboard and Render
+
+The whiteboard is backed by one Node service. It saves boards in MongoDB and
+broadcasts each saved pixel to every open browser through a WebSocket. The game
+client and server are deliberately served from the same Render URL; no deployed
+server URL is hard-coded into the browser code.
+
+### Local development
+
+Add your MongoDB Atlas connection string to your uncommitted `.env.local`:
+
+```env
+MONGODB_URI=mongodb+srv://USERNAME:PASSWORD@YOUR-CLUSTER.mongodb.net/?retryWrites=true&w=majority
+MONGODB_DB_NAME=club_cmu
+```
+
+Keep the existing `VITE_AUTH0_*` values in that same file. Then run:
+
+```bash
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. Vite proxies `/ws` and `/api` to the local Node
+server on port 3001, so all whiteboard traffic is still same-origin.
+
+### Deploy to Render
+
+1. Push this repository to GitHub, then in Render choose **New → Blueprint** and
+   select that repository. The repository-root `render.yaml` creates one Docker
+   web service from the `club-cmu` folder.
+2. In its environment settings, add `MONGODB_URI` and the three `VITE_AUTH0_*`
+   variables. `VITE_AUTH0_AUDIENCE` can be empty until a game server starts
+   verifying identities. The `VITE_` values are compiled into the browser bundle
+   while Render builds the image, so redeploy after changing any of them.
+3. In MongoDB Atlas, allow the Render service to connect and use a database user
+   whose permissions are limited to this project's database.
+4. Once Render gives you its `https://…onrender.com` URL, add that exact origin
+   to Auth0's **Allowed Callback URLs**, **Allowed Logout URLs**, and **Allowed
+   Web Origins**, then redeploy.
+
+Render checks `/api/health`; a healthy response confirms both the web service
+and MongoDB are reachable. Open the Render URL in two browsers, enter **Open The
+Fence**, and change a pixel in one: it should appear in the other immediately.
+The Blueprint deliberately runs one web-service instance, because WebSocket
+broadcasts live in that process; add a shared pub/sub layer before scaling it.
 
 ## Writing Code
 

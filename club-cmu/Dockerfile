@@ -8,18 +8,13 @@ RUN npm ci
 COPY . .
 
 #  Auth0 config is compiled into the JS bundle at build time, not read at
-#  `docker run`. Two ways to supply it, in priority order:
-#    1. --build-arg VITE_AUTH0_DOMAIN=... --build-arg VITE_AUTH0_CLIENT_ID=...
-#    2. a .env.local in the build context (gitignored, so only your own machine)
+#  `docker run`. Render turns its environment values into Docker build args;
+#  use the same --build-arg values when building locally. With neither, the
+#  build succeeds and the app shows its setup screen rather than failing.
 #
-#  With neither, the build still succeeds and the app shows its setup screen
-#  rather than failing in a confusing way at sign-in.
-#
-#  Declared without defaults, and unset before the build runs: Vite gives the
-#  process environment precedence over .env files, so an ARG that is merely
-#  *declared* leaks in as an empty VITE_AUTH0_DOMAIN and silently blanks out a
-#  perfectly good .env.local. The build args are written to a file, then removed
-#  from the environment, so only the file is ever read.
+#  Vite reads the values from a short-lived .env.local file. The real local
+#  .env.local is excluded by .dockerignore, so MongoDB credentials never enter
+#  the Docker build context.
 ARG VITE_AUTH0_DOMAIN
 ARG VITE_AUTH0_CLIENT_ID
 ARG VITE_AUTH0_AUDIENCE
@@ -32,11 +27,16 @@ RUN set -eu; \
     unset VITE_AUTH0_DOMAIN VITE_AUTH0_CLIENT_ID VITE_AUTH0_AUDIENCE; \
     npm run build-nolog
 
-FROM nginx:alpine
+FROM node:20-alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
+WORKDIR /app
+ENV NODE_ENV=production
 
-EXPOSE 80
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY --from=build /app/dist ./dist
+COPY server ./server
 
-CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 3000
+
+CMD ["npm", "start"]

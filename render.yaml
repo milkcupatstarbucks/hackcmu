@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: club-cmu-whiteboard
+    runtime: docker
+    rootDir: club-cmu
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # One instance keeps every live connection in the same broadcast group.
+    # Add a shared pub/sub layer before raising this number.
+    numInstances: 1
+    healthCheckPath: /api/health
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: club_cmu
+      - key: VITE_AUTH0_DOMAIN
+        sync: false
+      - key: VITE_AUTH0_CLIENT_ID
+        sync: false
+      - key: VITE_AUTH0_AUDIENCE
+        sync: false
