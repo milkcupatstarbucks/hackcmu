@@ -1,47 +1,77 @@
 #whiteboard-panel[hidden] {
-    display: none;
+  display: none;
 }
 
 #whiteboard-panel {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    display: grid;
-    place-items: center;
-    background: #000a;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #0009;
 }
 
 .whiteboard-card {
-    padding: 20px;
-    background: white;
-    color: #222;
-    border-radius: 12px;
-    max-height: 95vh;
-    overflow: auto;
+  width: min(1056px, 100%);
+  max-height: 95vh;
+  overflow: auto;
+  padding: 16px;
+  border-radius: 12px;
+  background: #fffdf8;
+  color: #242428;
+  font-family: Arial, sans-serif;
+}
+
+.whiteboard-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.whiteboard-toolbar button {
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+}
+
+.whiteboard-toolbar button[aria-pressed="true"] {
+  color: white;
+  background: #c41230;
+  border-color: #c41230;
+}
+
+.whiteboard-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+#whiteboard-width {
+  width: 80px;
 }
 
 #whiteboard-canvas {
-    display: block;
-    width: min(512px, 85vw);
-    height: auto;
-    image-rendering: pixelated;
-    cursor: crosshair;
+  display: block;
+  width: 100%;
+  height: auto;
+  background: white;
+  outline: 1px solid #ddd;
+  cursor: crosshair;
+  touch-action: none;
 }
 
-#whiteboard-palette {
-    display: flex;
-    gap: 8px;
-    margin: 15px 0;
+#whiteboard-status,
+#whiteboard-presence {
+  font-size: 13px;
+  color: #666;
 }
 
-#whiteboard-palette button {
-    width: 28px;
-    height: 28px;
-    border: 1px solid #777;
-    cursor: pointer;
-}
-
-#whiteboard-palette button[aria-pressed="true"] {
-    outline: 3px solid #222;
-    outline-offset: 2px;
+.whiteboard-toolbar button:focus-visible {
+  outline: 3px solid #3388ff;
+  outline-offset: 2px;
 }

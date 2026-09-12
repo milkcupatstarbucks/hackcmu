@@ -14,6 +14,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
+!.env.agent.example
 data/boards.json
 data/boards.json.tmp
 

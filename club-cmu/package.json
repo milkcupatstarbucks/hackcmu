@@ -22,6 +22,7 @@
     "build": "vite build --config vite/config.prod.mjs",
     "build-nolog": "npm run build",
     "start": "node server/index.mjs",
+    "test": "node --test server/integration.test.mjs",
     "migrate:json-to-mongo": "node scripts/migrate-json-to-mongodb.mjs"
   },
   "devDependencies": {

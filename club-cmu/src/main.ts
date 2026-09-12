@@ -1,5 +1,5 @@
 import StartGame from './game/main';
-import { initAuth } from './auth/auth0';
+import { initAuth, getAccessToken, getUser } from './auth/auth0';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
@@ -12,6 +12,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     //  return trip. Awaiting here means Preloader can route to a known state.
     await initAuth();
 
+    const bridge = window as unknown as { BoardConnection: { configure: (options: unknown) => void } };
+    bridge.BoardConnection.configure({ getToken: getAccessToken, getName: () => getUser()?.name || 'Student' });
     StartGame('game-container');
 
 });

@@ -1,278 +1,608 @@
 var Whiteboard = (function () {
-  var SIZE = 32;
-  var COOLDOWN = 1000;
-  var COLORS = [
-    "#ffffff", "#222222", "#c41230", "#ffcc00",
-    "#22aa66", "#3388ff", "#9955dd", "#ff88bb"
-  ];
+  "use strict";
+
+  var WIDTH = 1024;
+  var HEIGHT = 768;
+  var MAX_POINTS = 12000;
 
   var panel = document.getElementById("whiteboard-panel");
   var canvas = document.getElementById("whiteboard-canvas");
-  var palette = document.getElementById("whiteboard-palette");
-  var status = document.getElementById("whiteboard-status");
   var ctx = canvas.getContext("2d");
-  var cellSize = canvas.width / SIZE;
+  var status = document.getElementById("whiteboard-status");
 
-  var pixels = [];
-  var selectedColor = COLORS[2];
+  // Persistent drawing data.
+  var elements = [];
+  var ready = false;
+
+  // Temporary interaction data.
+  var peers = new Map();
+  var draft = null;
+  var pointerId = null;
+  var localCursor = null;
   var boardId = null;
-  var nextPlacementAt = 0;
-  var socket = null;
-  var reconnectTimer = null;
-  var connectionState = "disconnected";
-  var clientId = getClientId();
+  var tool = "pen";
+  var lastCursorSent = 0;
+
+  var identity = {
+    playerId: makeId(),
+    name: "Student",
+    color: "#3388ff"
+  };
+
+  // Keep the local prototype's identity across refreshes in this tab.
+  try {
+    var savedId = sessionStorage.getItem("fence-author-id");
+
+    if (savedId) identity.playerId = savedId;
+
+    sessionStorage.setItem(
+      "fence-author-id",
+      identity.playerId
+    );
+  } catch (error) {}
 
   var api = {
     isOpen: false,
+    onOpen: function () {},
+    onClose: function () {},
+    setReady: function(value) { ready = value; if (!value) cancelDraft(); status.textContent = value ? "Ready to draw." : "Connecting to saved board…"; },
+    showError: function(message) { status.textContent = message; },
     open: open,
     close: close,
-    applyPixel: applyPixel,
-    loadBoard: loadBoard
+    loadBoard: loadBoard,
+    applyElement: applyElement,
+    removeElement: removeElement,
+    updateCursor: updateCursor,
+    removeCursor: removeCursor,
+    setCursorIdentity: setCursorIdentity,
+
+    // Local-only default: immediately accept our own additions.
+    // Your teammates replace these with network requests later.
+    onElementCreate: function (element) {
+      applyElement(element);
+    },
+
+    onElementDelete: function (request) {
+      removeElement(request);
+    },
+
+    onCursorMove: function () {},
+    onCursorLeave: function () {},
+
+    getElements: function () {
+      // Return a copy so the organizer cannot accidentally edit the board.
+      return JSON.parse(JSON.stringify(elements));
+    },
+
+    getBoardId: function () {
+      return boardId;
+    },
   };
 
+  function makeId() {
+    return crypto.randomUUID();
+  }
+
   function validColor(color) {
-    return COLORS.indexOf(color) !== -1;
+    return typeof color === "string" &&
+      /^#[0-9a-f]{6}$/i.test(color);
   }
 
-  function getClientId() {
-    var key = "cmu-whiteboard:client-id";
-
-    try {
-      var existing = localStorage.getItem(key);
-      if (existing && /^[a-zA-Z0-9_-]{8,128}$/.test(existing)) return existing;
-
-      var generated = window.crypto && window.crypto.randomUUID
-        ? window.crypto.randomUUID()
-        : "client-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
-      localStorage.setItem(key, generated);
-      return generated;
-    } catch (error) {
-      // A private browser window still receives an anonymous session id.
-      return "client-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
-    }
+  function validPoint(point) {
+    return Array.isArray(point) &&
+      point.length === 2 &&
+      Number.isFinite(point[0]) &&
+      Number.isFinite(point[1]) &&
+      point[0] >= 0 &&
+      point[0] <= WIDTH &&
+      point[1] >= 0 &&
+      point[1] <= HEIGHT;
   }
 
-  function draw() {
-    pixels.forEach(function (color, index) {
-      var x = index % SIZE;
-      var y = Math.floor(index / SIZE);
-
-      ctx.fillStyle = color;
-      ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
-    });
-
-    ctx.strokeStyle = "#dddddd";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-
-    for (var i = 0; i <= SIZE; i++) {
-      var position = i * cellSize;
-      ctx.moveTo(position, 0);
-      ctx.lineTo(position, canvas.height);
-      ctx.moveTo(0, position);
-      ctx.lineTo(canvas.width, position);
-    }
-
-    ctx.stroke();
-  }
-
-  function loadBoard(data) {
+  function validElement(element) {
     if (
-      !Array.isArray(data) ||
-      data.length !== SIZE * SIZE ||
-      !data.every(validColor)
+      !element ||
+      typeof element.id !== "string" ||
+      element.id.length > 128 ||
+      element.boardId !== boardId ||
+      typeof element.authorId !== "string" ||
+      !validColor(element.color)
     ) {
       return false;
     }
 
-    pixels = data.slice();
-    draw();
-    return true;
-  }
-
-  function open(id) {
-    // Keep the current drawing when reopening the same board. The socket stays
-    // connected while the panel is hidden and continues receiving updates.
-    if (boardId !== id) {
-      pixels = new Array(SIZE * SIZE).fill("#ffffff");
-    }
-    boardId = id;
-    draw();
-    api.isOpen = true;
-    panel.hidden = false;
-    connect();
-    updateStatus();
-  }
-
-  function close() {
-    api.isOpen = false;
-    panel.hidden = true;
-    
-  }
-
-  function applyPixel(data) {
-    if (
-      !data ||
-      data.boardId !== boardId ||
-      !Number.isInteger(data.x) ||
-      !Number.isInteger(data.y) ||
-      data.x < 0 || data.x >= SIZE ||
-      data.y < 0 || data.y >= SIZE ||
-      !validColor(data.color)
-    ) {
-      return;
+    if (element.type === "stroke") {
+      return Number.isFinite(element.width) &&
+        element.width >= 1 &&
+        element.width <= 16 &&
+        Array.isArray(element.points) &&
+        element.points.length > 0 &&
+        element.points.length <= MAX_POINTS &&
+        element.points.every(validPoint);
     }
 
-    pixels[data.y * SIZE + data.x] = data.color;
-    draw();
-  }
-
-  function socketUrl() {
-    var protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return protocol + "//" + window.location.host + "/ws";
-  }
-
-  function send(message) {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(message));
-      return true;
+    if (element.type === "text") {
+      return validPoint([element.x, element.y]) &&
+        typeof element.text === "string" &&
+        element.text.length > 0 &&
+        element.text.length <= 200;
     }
 
     return false;
   }
 
-  function connect() {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      // Opening an existing connection must still request the board snapshot.
-      send({ type: "join", boardId: boardId, clientId: clientId });
-      return;
-    }
-
-    if (socket && socket.readyState === WebSocket.CONNECTING) {
-      return;
-    }
-
-    connectionState = "connecting";
-    updateStatus();
-    socket = new WebSocket(socketUrl());
-
-    socket.addEventListener("open", function () {
-      connectionState = "connected";
-      send({ type: "join", boardId: boardId, clientId: clientId });
-      updateStatus();
-    });
-
-    socket.addEventListener("message", function (event) {
-      var message;
-
-      try {
-        message = JSON.parse(event.data);
-      } catch (error) {
-        return;
-      }
-
-      if (message.type === "snapshot" && message.boardId === boardId) {
-        loadBoard(message.pixels);
-      } else if (message.type === "pixel") {
-        applyPixel(message);
-      } else if (message.type === "error") {
-        connectionState = "error";
-        status.textContent = "Whiteboard error: " + message.message;
-      }
-    });
-
-    socket.addEventListener("close", function () {
-      socket = null;
-
-      if (!api.isOpen) {
-        return;
-      }
-
-      connectionState = "disconnected";
-      updateStatus();
-      clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(connect, 1500);
-    });
-
-    socket.addEventListener("error", function () {
-      connectionState = "error";
-      updateStatus();
-    });
+  function storageKey() {
+    // Separate key so we don't overwrite the old pixel drawing.
+    return "cmu-freehand-v1:" + boardId;
   }
 
-  function updateStatus() {
-    var remaining = Math.max(0, nextPlacementAt - Date.now());
+  function save() { /* Persistence belongs to the server. */ }
 
-    if (connectionState === "connecting") {
-      status.textContent = "Connecting to the shared whiteboard...";
-      return;
+  function loadBoard(data) {
+    if (
+      !Array.isArray(data) ||
+      !data.every(validElement)
+    ) {
+      return false;
     }
 
-    if (connectionState === "disconnected" || connectionState === "error") {
-      status.textContent = "Reconnecting to the shared whiteboard...";
-      return;
-    }
-
-    status.textContent = remaining > 0
-      ? "Next pixel in " + (remaining / 1000).toFixed(1) + "s"
-      : "Pick a color, then click a pixel.";
+    elements = JSON.parse(JSON.stringify(data));
+    render();
+    return true;
   }
 
-  COLORS.forEach(function (color) {
-    var button = document.createElement("button");
+  function applyElement(element) {
+    if (!validElement(element)) return false;
 
-    button.type = "button";
-    button.style.backgroundColor = color;
-    button.setAttribute("aria-label", "Select " + color);
-    button.setAttribute("aria-pressed", String(color === selectedColor));
-
-    button.addEventListener("click", function () {
-      selectedColor = color;
-
-      Array.from(palette.children).forEach(function (item) {
-        item.setAttribute("aria-pressed", String(item === button));
-      });
-    });
-
-    palette.appendChild(button);
-  });
-
-  canvas.addEventListener("click", function (event) {
-    if (!api.isOpen || Date.now() < nextPlacementAt) return;
-
-    var bounds = canvas.getBoundingClientRect();
-    var x = Math.floor((event.clientX - bounds.left) / bounds.width * SIZE);
-    var y = Math.floor((event.clientY - bounds.top) / bounds.height * SIZE);
-
-    if (x < 0 || x >= SIZE || y < 0 || y >= SIZE) return;
-
-    if (!send({
-      type: "place",
-      boardId: boardId,
-      x: x,
-      y: y,
-      color: selectedColor
+    // Ignore duplicate deliveries of the same operation.
+    if (elements.some(function (item) {
+      return item.id === element.id;
     })) {
-      status.textContent = "Not connected yet. Your pixel was not sent.";
-      connect();
+      return false;
+    }
+
+    elements.push(JSON.parse(JSON.stringify(element)));
+    save();
+    render();
+    return true;
+  }
+
+  function removeElement(request) {
+    if (!request || request.boardId !== boardId) return;
+
+    elements = elements.filter(function (element) {
+      return element.id !== request.id;
+    });
+
+    save();
+    render();
+  }
+
+  function drawElement(element) {
+    ctx.strokeStyle = element.color;
+    ctx.fillStyle = element.color;
+
+    if (element.type === "text") {
+      ctx.font = "24px Arial";
+      ctx.textBaseline = "top";
+      ctx.fillText(element.text, element.x, element.y);
       return;
     }
 
-    nextPlacementAt = Date.now() + COOLDOWN;
+    var points = element.points;
 
-    updateStatus();
+    // A click without dragging makes a dot.
+    if (points.length === 1) {
+      ctx.beginPath();
+      ctx.arc(
+        points[0][0],
+        points[0][1],
+        element.width / 2,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+      return;
+    }
+
+    ctx.lineWidth = element.width;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+
+    for (var i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i][0], points[i][1]);
+    }
+
+    ctx.stroke();
+  }
+
+  function drawCursor(cursor, isLocal) {
+    var name = cursor.name.slice(0, 24) +
+      (isLocal ? " (you)" : "");
+
+    ctx.fillStyle = cursor.color;
+    ctx.beginPath();
+    ctx.arc(cursor.x, cursor.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.font = "14px Arial";
+    var labelWidth = ctx.measureText(name).width + 12;
+
+    // Keep the label within the board edges.
+    var x = Math.max(
+      0,
+      Math.min(cursor.x + 10, WIDTH - labelWidth)
+    );
+    var y = Math.max(
+      0,
+      Math.min(cursor.y + 10, HEIGHT - 24)
+    );
+
+    ctx.fillRect(x, y, labelWidth, 24);
+    ctx.fillStyle = "#ffffff";
+    ctx.textBaseline = "top";
+    ctx.fillText(name, x + 6, y + 4);
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+    elements.forEach(drawElement);
+
+    if (draft) drawElement(draft);
+
+    peers.forEach(function (cursor) {
+      drawCursor(cursor, false);
+    });
+
+    if (localCursor) {
+      drawCursor(
+        Object.assign({}, identity, localCursor),
+        true
+      );
+    }
+
+    document.getElementById(
+      "whiteboard-presence"
+    ).textContent = peers.size + " other cursors";
+  }
+
+  function pointFromEvent(event) {
+    var bounds = canvas.getBoundingClientRect();
+
+    return [
+      Math.max(0, Math.min(
+        WIDTH,
+        (event.clientX - bounds.left) /
+          bounds.width * WIDTH
+      )),
+      Math.max(0, Math.min(
+        HEIGHT,
+        (event.clientY - bounds.top) /
+          bounds.height * HEIGHT
+      ))
+    ];
+  }
+
+  function setLocalCursor(point) {
+    localCursor = { x: point[0], y: point[1] };
+
+    if (Date.now() - lastCursorSent >= 60) {
+      sendCursor();
+    }
+  }
+
+  function sendCursor() {
+    if (!localCursor || !api.isOpen) return;
+
+    lastCursorSent = Date.now();
+
+    api.onCursorMove(Object.assign(
+      {},
+      identity,
+      localCursor,
+      { boardId: boardId }
+    ));
+  }
+
+  function leaveCursor() {
+    if (localCursor) {
+      api.onCursorLeave({
+        boardId: boardId,
+        playerId: identity.playerId
+      });
+    }
+
+    localCursor = null;
+    render();
+  }
+
+  function updateCursor(cursor) {
+    if (
+      !api.isOpen ||
+      !cursor ||
+      cursor.boardId !== boardId ||
+      cursor.playerId === identity.playerId ||
+      typeof cursor.playerId !== "string" ||
+      typeof cursor.name !== "string" ||
+      !validColor(cursor.color) ||
+      !validPoint([cursor.x, cursor.y])
+    ) {
+      return false;
+    }
+
+    peers.set(cursor.playerId, {
+      playerId: cursor.playerId,
+      name: cursor.name.slice(0, 24),
+      color: cursor.color,
+      x: cursor.x,
+      y: cursor.y,
+      seenAt: Date.now()
+    });
+
+    render();
+    return true;
+  }
+
+  function removeCursor(playerId) {
+    peers.delete(playerId);
+    render();
+  }
+
+  function setCursorIdentity(nextIdentity) {
+    if (
+      !nextIdentity ||
+      typeof nextIdentity.playerId !== "string" ||
+      !nextIdentity.playerId ||
+      typeof nextIdentity.name !== "string" ||
+      !validColor(nextIdentity.color)
+    ) {
+      return false;
+    }
+
+    leaveCursor();
+
+    identity = {
+      playerId: nextIdentity.playerId,
+      name: nextIdentity.name.slice(0, 24),
+      color: nextIdentity.color
+    };
+
+    return true;
+  }
+
+  function cancelDraft() {
+    var captured = pointerId;
+    pointerId = null;
+    draft = null;
+
+    if (
+      captured !== null &&
+      canvas.hasPointerCapture(captured)
+    ) {
+      canvas.releasePointerCapture(captured);
+    }
+
+    render();
+  }
+
+  function open(id) {
+    if (typeof id !== "string" || !id) return;
+
+    cancelDraft();
+    leaveCursor();
+    peers.clear();
+    boardId = id;
+    elements = [];
+
+    ready = false;
+
+    api.isOpen = true;
+      panel.hidden = false;
+      chooseTool(tool);
+      render();
+      api.onOpen(boardId);
+  }
+
+  function close() {
+    cancelDraft();
+    leaveCursor();
+    peers.clear();
+    api.isOpen = false;
+    panel.hidden = true;
+    ready = false;
+    api.onClose();
+  }
+
+  function chooseTool(nextTool) {
+    tool = nextTool;
+
+    document.getElementById(
+      "whiteboard-pen"
+    ).setAttribute("aria-pressed", String(tool === "pen"));
+
+    document.getElementById(
+      "whiteboard-text"
+    ).setAttribute("aria-pressed", String(tool === "text"));
+
+    status.textContent = tool === "pen"
+      ? "Drag to draw. Undo removes your latest addition."
+      : "Click to place a short text note.";
+  }
+
+  canvas.addEventListener("pointerdown", function (event) {
+    if (
+      !api.isOpen ||
+      !event.isPrimary ||
+      event.button !== 0 ||
+      pointerId !== null
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    var point = pointFromEvent(event);
+    var color = document.getElementById(
+      "whiteboard-color"
+    ).value;
+
+    setLocalCursor(point);
+
+    if (tool === "text") {
+      // Simple MVP editor. Replace with an inline text box later.
+      leaveCursor();
+      var text = window.prompt("Add a short note:");
+
+      if (text && text.trim()) {
+        api.onElementCreate({
+          id: makeId(),
+          boardId: boardId,
+          authorId: identity.playerId,
+          type: "text",
+          x: Math.min(point[0], WIDTH - 30),
+          y: Math.min(point[1], HEIGHT - 30),
+          text: text.trim().slice(0, 200),
+          color: color
+        });
+      }
+
+      return;
+    }
+
+    pointerId = event.pointerId;
+    canvas.setPointerCapture(pointerId);
+
+    draft = {
+      id: makeId(),
+      boardId: boardId,
+      authorId: identity.playerId,
+      type: "stroke",
+      points: [point],
+      color: color,
+      width: Number(document.getElementById(
+        "whiteboard-width"
+      ).value)
+    };
+
+    render();
   });
+
+  canvas.addEventListener("pointermove", function (event) {
+    if (!api.isOpen || !event.isPrimary) return;
+
+    var point = pointFromEvent(event);
+    setLocalCursor(point);
+
+    if (
+      draft &&
+      event.pointerId === pointerId &&
+      draft.points.length < MAX_POINTS
+    ) {
+      var previous = draft.points[draft.points.length - 1];
+
+      // Skip almost-identical points to keep strokes smaller.
+      if (Math.hypot(
+        point[0] - previous[0],
+        point[1] - previous[1]
+      ) >= 1) {
+        draft.points.push(point);
+      }
+    }
+
+    render();
+  });
+
+  canvas.addEventListener("pointerup", function (event) {
+    if (event.pointerId !== pointerId) return;
+
+    var completed = draft;
+    cancelDraft();
+
+    if (completed) api.onElementCreate(completed);
+
+    leaveCursor();
+  });
+
+  canvas.addEventListener("pointercancel", function () {
+    cancelDraft();
+    leaveCursor();
+  });
+
+  canvas.addEventListener("lostpointercapture", function () {
+    if (draft) {
+      cancelDraft();
+      leaveCursor();
+    }
+  });
+
+  canvas.addEventListener("pointerleave", function () {
+    if (!draft) leaveCursor();
+  });
+
+  document.getElementById(
+    "whiteboard-pen"
+  ).onclick = function () {
+    chooseTool("pen");
+  };
+
+  document.getElementById(
+    "whiteboard-text"
+  ).onclick = function () {
+    chooseTool("text");
+  };
+
+  document.getElementById(
+    "whiteboard-close"
+  ).onclick = close;
+
+  document.getElementById(
+    "whiteboard-undo"
+  ).onclick = function () {
+    if (!ready) return;
+    for (var i = elements.length - 1; i >= 0; i--) {
+      if (elements[i].authorId === identity.playerId) {
+        api.onElementDelete({
+          boardId: boardId,
+          id: elements[i].id
+        });
+        return;
+      }
+    }
+  };
 
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape" && api.isOpen) close();
   });
 
-  setInterval(function () {
-    if (api.isOpen) updateStatus();
-  }, 100);
+  window.addEventListener("blur", function () {
+    cancelDraft();
+    leaveCursor();
+  });
 
-  document
-  .getElementById("whiteboard-close")
-  .addEventListener("click", close);
+  window.addEventListener("pagehide", leaveCursor);
+
+  setInterval(function () {
+    var changed = false;
+
+    peers.forEach(function (cursor, id) {
+      if (Date.now() - cursor.seenAt > 12000) {
+        peers.delete(id);
+        changed = true;
+      }
+    });
+
+    if (
+      localCursor &&
+      Date.now() - lastCursorSent > 1000
+    ) {
+      sendCursor();
+    }
+
+    if (changed) render();
+  }, 250);
+
   return api;
 })();

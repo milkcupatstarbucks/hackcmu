@@ -1,0 +1,27 @@
+services:
+  mongo:
+    image: mongo:7
+    volumes:
+      - board-data:/data/db
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --eval, "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  web:
+    build: .
+    ports:
+      - "127.0.0.1:8080:3000"
+    environment:
+      NODE_ENV: development
+      LOCAL_DEMO: "true"
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DB_NAME: club_cmu_local
+      IFM_API_KEY: ${IFM_API_KEY:-}
+      IFM_BASE_URL: https://api.ifm.ai/v1
+      IFM_MODEL: IFM/K2-Horizon-375B-A23B
+    depends_on:
+      mongo:
+        condition: service_healthy
+volumes:
+  board-data:
