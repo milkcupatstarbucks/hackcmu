@@ -20,6 +20,7 @@ var Whiteboard = (function () {
   var socket = null;
   var reconnectTimer = null;
   var connectionState = "disconnected";
+  var clientId = getClientId();
 
   var api = {
     isOpen: false,
@@ -31,6 +32,24 @@ var Whiteboard = (function () {
 
   function validColor(color) {
     return COLORS.indexOf(color) !== -1;
+  }
+
+  function getClientId() {
+    var key = "cmu-whiteboard:client-id";
+
+    try {
+      var existing = localStorage.getItem(key);
+      if (existing && /^[a-zA-Z0-9_-]{8,128}$/.test(existing)) return existing;
+
+      var generated = window.crypto && window.crypto.randomUUID
+        ? window.crypto.randomUUID()
+        : "client-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+      localStorage.setItem(key, generated);
+      return generated;
+    } catch (error) {
+      // A private browser window still receives an anonymous session id.
+      return "client-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    }
   }
 
   function draw() {
@@ -132,7 +151,7 @@ var Whiteboard = (function () {
 
     socket.addEventListener("open", function () {
       connectionState = "connected";
-      send({ type: "join", boardId: boardId });
+      send({ type: "join", boardId: boardId, clientId: clientId });
       updateStatus();
     });
 

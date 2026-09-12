@@ -13,13 +13,16 @@ dotenv.config({ path: '.env.local' });
 
 const PORT = Number(process.env.PORT ?? 3001);
 const MONGODB_URI = process.env.MONGODB_URI;
-const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME ?? 'club_cmu';
+// MONGODB_DB is accepted too, so deployments made with the earlier server
+// configuration keep using the same database without a migration.
+const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME ?? process.env.MONGODB_DB ?? 'club_cmu';
 const BOARD_SIZE = 32;
 const PIXEL_COUNT = BOARD_SIZE * BOARD_SIZE;
 const COLORS = new Set([
     '#ffffff', '#222222', '#c41230', '#ffcc00',
     '#22aa66', '#3388ff', '#9955dd', '#ff88bb'
 ]);
+const CLIENT_ID = /^[a-zA-Z0-9_-]{8,128}$/;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDirectory = path.resolve(__dirname, '..', 'dist');
 
@@ -31,8 +34,15 @@ if (!MONGODB_URI)
 const mongoClient = new MongoClient(MONGODB_URI);
 await mongoClient.connect();
 
-const boards = mongoClient.db(MONGODB_DB_NAME).collection('whiteboards');
-await boards.createIndex({ updatedAt: -1 });
+const database = mongoClient.db(MONGODB_DB_NAME);
+// `boards` is the collection used by the preceding REST implementation, so
+// existing drawings remain visible after this real-time upgrade.
+const boards = database.collection('boards');
+const clients = database.collection('clients');
+await Promise.all([
+    boards.createIndex({ updatedAt: -1 }),
+    clients.createIndex({ lastSeenAt: -1 })
+]);
 
 const app = express();
 const server = http.createServer(app);
@@ -64,6 +74,32 @@ app.get('/api/health', async (_request, response) => {
     }
 });
 
+app.use(express.json({ limit: '16kb' }));
+
+app.post('/api/clients/register', async (request, response) => {
+    const { clientId, boardId } = request.body ?? {};
+
+    if (!isClientId(clientId) || (boardId !== undefined && !isBoardId(boardId)))
+    {
+        response.status(400).json({ error: 'Invalid client or board id.' });
+        return;
+    }
+
+    await registerClient(clientId, boardId);
+    response.status(201).json({ clientId });
+});
+
+app.get('/api/boards/:boardId', async (request, response) => {
+    if (!isBoardId(request.params.boardId))
+    {
+        response.status(400).json({ error: 'Invalid board id.' });
+        return;
+    }
+
+    const state = await getBoardState(request.params.boardId);
+    response.json({ boardId: state.boardId, pixels: state.pixels });
+});
+
 app.use(express.static(distDirectory));
 app.use((_request, response) => {
     response.sendFile(path.join(distDirectory, 'index.html'));
@@ -79,6 +115,11 @@ function isBoardId (value)
     return typeof value === 'string' && /^[a-z0-9-]{1,64}$/i.test(value);
 }
 
+function isClientId (value)
+{
+    return typeof value === 'string' && CLIENT_ID.test(value);
+}
+
 function isPixelPlacement (message)
 {
     return (
@@ -91,6 +132,22 @@ function isPixelPlacement (message)
 function isValidPixels (value)
 {
     return Array.isArray(value) && value.length === PIXEL_COUNT && value.every((color) => COLORS.has(color));
+}
+
+async function registerClient (clientId, boardId)
+{
+    const now = new Date();
+    const update = {
+        $set: { lastSeenAt: now },
+        $setOnInsert: { firstSeenAt: now }
+    };
+
+    if (boardId)
+    {
+        update.$addToSet = { boards: boardId };
+    }
+
+    await clients.updateOne({ _id: clientId }, update, { upsert: true });
 }
 
 function send (socket, message)
@@ -151,14 +208,26 @@ async function saveAndBroadcastPlacement (state, placement)
         .catch(() => undefined)
         .then(() => boards.updateOne(
             { _id: state.boardId },
-            { $set: { pixels: pixelsToSave, updatedAt: new Date() } },
+            {
+                $set: {
+                    pixels: pixelsToSave,
+                    updatedAt: new Date(),
+                    ...(placement.clientId ? { lastModifiedBy: placement.clientId } : {})
+                }
+            },
             { upsert: true }
         ));
 
     try
     {
         await state.persistChain;
-        broadcast(state, { type: 'pixel', ...placement });
+        broadcast(state, {
+            type: 'pixel',
+            boardId: placement.boardId,
+            x: placement.x,
+            y: placement.y,
+            color: placement.color
+        });
     }
     catch (error)
     {
@@ -190,9 +259,9 @@ webSocketServer.on('connection', (socket) => {
 
         if (message.type === 'join')
         {
-            if (!isBoardId(message.boardId))
+            if (!isBoardId(message.boardId) || (message.clientId !== undefined && !isClientId(message.clientId)))
             {
-                send(socket, { type: 'error', message: 'Invalid board.' });
+                send(socket, { type: 'error', message: 'Invalid board or client.' });
                 return;
             }
 
@@ -205,6 +274,13 @@ webSocketServer.on('connection', (socket) => {
             {
                 joinedState = await getBoardState(message.boardId);
                 joinedState.clients.add(socket);
+                socket.clientId = message.clientId ?? null;
+
+                if (socket.clientId)
+                {
+                    await registerClient(socket.clientId, joinedState.boardId);
+                }
+
                 send(socket, { type: 'snapshot', boardId: joinedState.boardId, pixels: joinedState.pixels });
             }
             catch (error)
@@ -228,7 +304,8 @@ webSocketServer.on('connection', (socket) => {
                 boardId: joinedState.boardId,
                 x: message.x,
                 y: message.y,
-                color: message.color
+                color: message.color,
+                clientId: socket.clientId
             });
         }
     });
